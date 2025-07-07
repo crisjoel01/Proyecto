@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 # =============================================
-# TUS FUNCIONES DE CINEMÁTICA (MANTENIDAS SIN CAMBIOS)
+# TUS FUNC DE CINEMÁTICA (MANTENIDAS SIN CAMBIOS)
 # =============================================
 
 def cinematica_directa_RPP(theta1, q2, q3, a=0.1, b=0.2):
