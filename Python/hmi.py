@@ -1,285 +1,374 @@
-import numpy as np
-from math import cos, sin, radians, atan2, sqrt, degrees
-import serial
-import time
-import tkinter as tk
-from tkinter import ttk
+"""
+HMI PARA CONTROL DE ROBOT RPP
+Este programa permite:
+1. Calcular la cinemática inversa (de posición a articulaciones)
+2. Calcular la cinemática directa (de articulaciones a posición)
+3. Comunicarse con un robot real mediante puerto serial
+4. Visualizar y enviar comandos al robot
+"""
 
-# =============================================
-# TUS FUNCIONES DE CINEMÁTICA (MANTENIDAS SIN CAMBIOS)
-# =============================================
+# =============================================================================
+# MÓDULOS IMPORTADOS
+# =============================================================================
+import tkinter as tk                # Para la interfaz gráfica
+from tkinter import ttk, messagebox # Componentes modernos y cuadros de diálogo
+import numpy as np                  # Para cálculos matemáticos avanzados
+from math import cos, sin, radians  # Funciones trigonométricas
+import serial                       # Para comunicación con puerto serial
+import time                         # Para manejar retardos
 
-def cinematica_directa_RPP(theta1, q2, q3, a=0.1, b=0.2):
-    q1 = radians(theta1)
-    
-    T1 = np.array([
-        [cos(q1), -sin(q1), 0, 0],
-        [sin(q1), cos(q1), 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-    ])
-    
-    T2 = np.array([
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 1, q2+a],
-        [0, 0, 0, 1]
-    ])
-    
-    T3 = np.array([
-        [1, 0, 0, 0],
-        [0, 1, 0, q3+b],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-    ])
-    
-    T_total = T1 @ T2 @ T3
-    x, y, z = T_total[0:3, 3]
-    return round(x, 4), round(y, 4), round(z, 4)
+# =============================================================================
+# CONFIGURACIÓN GLOBAL (AJUSTAR SEGÚN HARDWARE)
+# =============================================================================
+SERIAL_PORT = '/dev/ttyUSB0'  # Puerto serial (cambiar según sistema operativo)
+BAUD_RATE = 115200            # Velocidad de comunicación (debe coincidir con ESP32)
+SERIAL_TIMEOUT = 1            # Tiempo de espera para operaciones serial (segundos)
 
-def cinematica_inversa_RPP(x, y, z, a=0, b=0):
-    theta1 = degrees(atan2(y,x))
-    theta1 = max(-90, min(180, theta1))
+# =============================================================================
+# VARIABLES GLOBALES
+# =============================================================================
+puerto_serial = None  # Almacenará el objeto de conexión serial cuando esté activo
+
+# =============================================================================
+# FUNCIONES DE CINEMÁTICA DEL ROBOT
+# =============================================================================
+def cinematica_inversa_RPP(x, y, z):
+    """
+    Calcula los valores de las articulaciones (q1, q2, q3) necesarios para alcanzar
+    una posición cartesiana específica (x, y, z).
     
-    q2 = z - a
-    q2 = max(0, q2)
+    Parámetros:
+        x (int): Coordenada X en mm
+        y (int): Coordenada Y en mm 
+        z (int): Coordenada Z en mm
     
-    r = sqrt(x**2 + y**2) - b
-    q3 = max(0, r)
+    Retorna:
+        tuple: (q1, q2, q3) donde:
+            q1: Ángulo de la articulación rotacional en grados (0-180)
+            q2: Extensión de la primera articulación prismática en mm
+            q3: Extensión de la segunda articulación prismática en mm
+    """
+    # Conversión a enteros para garantizar precisión
+    x, y, z = int(x), int(y), int(z)
     
-    print("\nResultados de Cinemática Inversa:")
-    print(f"Posición deseada: X={x:.3f} m, Y={y:.3f} m, Z={z:.3f} m")
-    print(f"\nValores de articulaciones calculados:")
-    print(f"Theta1 (q1): {theta1:.2f}°")
-    print(f"Extensión q2: {q2:.4f} m")
-    print(f"Extensión q3: {q3:.4f} m")
+    # Cálculo del ángulo theta1 (articulación rotacional)
+    # Fórmula basada en geometría del robot RPP
+    theta1 = int(np.degrees(np.arccos(-(y * np.sqrt(x**2 + y**2 - 676) + 26*x)/(x**2 + y**2))))
+    
+    # Limitar el ángulo al rango físico del servo (0-180°)
+    theta1 = max(0, min(180, theta1))
+    
+    # Cálculo de q2 (altura - articulación prismática vertical)
+    q2 = max(0, z - 45)  # El offset de 45mm corresponde a la altura base
+    
+    # Cálculo de q3 (radio - articulación prismática horizontal)
+    q3 = max(0, int(np.sqrt(x**2 + y**2 - 676) - 15))  # 676 = 26^2 (radio base)
     
     return theta1, q2, q3
 
-# =============================================
-# CLASE DE COMUNICACIÓN CON ESP32 (CORREGIDA)
-# =============================================
-
-class BrazoESP32:
-    def __init__(self, port='COM3', baudrate=115200):
-        try:
-            # Verificar si el módulo serial está instalado correctamente
-            try:
-                import serial
-                self.serial = serial.Serial(port, baudrate, timeout=1)
-                time.sleep(2)
-                print(f"Conexión establecida con ESP32 en {port}")
-            except AttributeError:
-                print("ERROR: El módulo 'serial' no está instalado correctamente.")
-                print("Ejecuta: pip install pyserial")
-                self.serial = None
-            except ImportError:
-                print("ERROR: No se encontró el módulo serial")
-                print("Ejecuta: pip install pyserial")
-                self.serial = None
-        except Exception as e:
-            print(f"Error al conectar con ESP32: {e}")
-            self.serial = None
+def cinematica_directa_RPP(q1, q2, q3):
+    """
+    Calcula la posición cartesiana (x, y, z) del efector final dados los valores
+    de las articulaciones del robot.
     
-    def enviar_comando(self, q1, q2, q3):
-        if not self.serial:
-            print("Error: No hay conexión con ESP32")
-            return False
-        
-        try:
-            q1 = int(max(-90, min(180, q1)))
-            q2 = max(0.0, float(q2))
-            q3 = max(0.0, float(q3))
+    Parámetros:
+        q1 (int): Ángulo de la articulación rotacional en grados
+        q2 (int): Extensión de la primera articulación prismática en mm
+        q3 (int): Extensión de la segunda articulación prismática en mm
+    
+    Retorna:
+        tuple: (x, y, z) posición del efector final en mm
+    """
+    # Conversión a enteros y validación
+    q1, q2, q3 = int(q1), int(q2), int(q3)
+    
+    # Convertir ángulo a radianes para funciones trigonométricas
+    q1_rad = radians(q1)
+    
+    # Matriz de transformación homogénea para la articulación rotacional (q1)
+    T1 = np.array([
+        [cos(q1_rad), -sin(q1_rad), 0, 0],
+        [sin(q1_rad), cos(q1_rad), 0, 0],
+        [0, 0, 1, q2 + 87],  # 87mm es la altura base del primer eslabón
+        [0, 0, 0, 1]
+    ])
+    
+    # Matriz de transformación para las articulaciones prismáticas (q2, q3)
+    T2 = np.array([
+        [1, 0, 0, -26],            # Offset en X del efector
+        [0, 1, 0, -(q3 + 15)],      # q3 + offset de 15mm
+        [0, 0, 1, -42],            # Offset en Z del efector
+        [0, 0, 0, 1]
+    ])
+    
+    # Combinar transformaciones
+    T_total = T1 @ T2  # Producto matricial
+    
+    # Extraer componentes de posición (primeros 3 elementos de la última columna)
+    x, y, z = T_total[0:3, 3]
+    
+    # Redondear y convertir a enteros
+    return int(round(x)), int(round(y)), int(round(z))
+
+# =============================================================================
+# FUNCIONES DE COMUNICACIÓN SERIAL
+# =============================================================================
+def conectar_serial():
+    """
+    Establece conexión serial con el robot.
+    
+    Retorna:
+        serial.Serial: Objeto de conexión serial o None si falla
+    """
+    global puerto_serial
+    
+    try:
+        # Si ya hay una conexión activa, la retorna
+        if puerto_serial and puerto_serial.is_open:
+            return puerto_serial
             
-            cmd = f"Q1,{q1};Q2,{q2:.3f};Q3,{q3:.3f}\n"
-            self.serial.write(cmd.encode())
-            print(f"Comando enviado: {cmd.strip()}")
-            
-            respuesta = self.serial.readline().decode().strip()
-            if respuesta:
-                print(f"ESP32 responde: {respuesta}")
-            return True
+        # Crear nueva conexión serial
+        puerto_serial = serial.Serial(
+            port=SERIAL_PORT,
+            baudrate=BAUD_RATE,
+            timeout=SERIAL_TIMEOUT
+        )
+        
+        # Espera para estabilizar la conexión (necesario en algunos hardware)
+        time.sleep(2)
+        print(f"Conexión establecida en {SERIAL_PORT} a {BAUD_RATE} baudios")
+        return puerto_serial
+        
+    except Exception as e:
+        # Mostrar error en interfaz y consola
+        messagebox.showerror("Error Serial", f"No se pudo conectar al puerto {SERIAL_PORT}:\n{str(e)}")
+        print(f"Error de conexión serial: {str(e)}")
+        return None
+
+def cerrar_serial():
+    """
+    Cierra la conexión serial de manera segura, liberando el puerto.
+    """
+    global puerto_serial
+    
+    if puerto_serial and puerto_serial.is_open:
+        try:
+            puerto_serial.close()
+            print("Conexión serial cerrada correctamente")
         except Exception as e:
-            print(f"Error al enviar comando: {e}")
+            print(f"Error al cerrar puerto serial: {str(e)}")
+    puerto_serial = None
+
+def enviar_comando_robot(q1, q2, q3):
+    """
+    Envía los valores articulares al robot mediante comunicación serial.
+    
+    Parámetros:
+        q1 (int): Ángulo de la articulación rotacional en grados
+        q2 (int): Extensión de la primera articulación prismática en mm
+        q3 (int): Extensión de la segunda articulación prismática en mm
+    
+    Retorna:
+        bool: True si el envío fue exitoso, False si falló
+    """
+    try:
+        # Establecer conexión
+        puerto = conectar_serial()
+        if not puerto:
             return False
-    
-    def cerrar(self):
-        if self.serial:
-            self.serial.close()
-            print("Conexión con ESP32 cerrada")
+            
+        # Formatear mensaje según protocolo especificado
+        mensaje = f"q1:{q1},q2:{q2},q3:{q3}\n"  # \n como delimitador final
+        
+        # Enviar mensaje codificado como bytes
+        puerto.write(mensaje.encode())
+        
+        # Debug en consola
+        print(f"[ENVIADO] {mensaje.strip()}")
+        return True
+        
+    except Exception as e:
+        # Manejo de errores
+        messagebox.showerror("Error Envío", f"Fallo en comunicación serial:\n{str(e)}")
+        cerrar_serial()  # Intentar limpiar la conexión
+        return False
 
-# =============================================
-# INTERFAZ GRÁFICA CORREGIDA (SIN RESOLUTION)
-# =============================================
+# =============================================================================
+# FUNCIONES DE LA INTERFAZ GRÁFICA (HMI)
+# =============================================================================
+def calcular_desde_posicion():
+    """
+    Calcula los valores articulares (q1,q2,q3) a partir de la posición ingresada
+    por el usuario y actualiza los campos correspondientes.
+    """
+    try:
+        # Obtener valores de la interfaz
+        x = int(entry_x.get())
+        y = int(entry_y.get())
+        z = int(entry_z.get())
+        
+        # Calcular cinemática inversa
+        q1, q2, q3 = cinematica_inversa_RPP(x, y, z)
+        
+        # Actualizar campos de articulaciones
+        entry_q1.delete(0, tk.END)
+        entry_q2.delete(0, tk.END)
+        entry_q3.delete(0, tk.END)
+        entry_q1.insert(0, str(q1))
+        entry_q2.insert(0, str(q2))
+        entry_q3.insert(0, str(q3))
+        
+    except ValueError:
+        messagebox.showerror("Error", "Por favor ingrese valores enteros válidos")
 
-class BrazoRPP_HMI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Control Brazo RPP - ESP32")
+def calcular_desde_articulaciones():
+    """
+    Calcula la posición cartesiana (x,y,z) a partir de los valores articulares
+    ingresados por el usuario y actualiza los campos correspondientes.
+    """
+    try:
+        # Obtener valores de la interfaz
+        q1 = int(entry_q1.get())
+        q2 = int(entry_q2.get())
+        q3 = int(entry_q3.get())
         
-        # Conexión ESP32 (configurar puerto correcto)
-        self.esp32 = BrazoESP32(port='COM4', baudrate=115200)
+        # Calcular cinemática directa
+        x, y, z = cinematica_directa_RPP(q1, q2, q3)
         
-        # Variables
-        self.q1 = tk.DoubleVar(value=0.0)
-        self.q2 = tk.DoubleVar(value=0.0)
-        self.q3 = tk.DoubleVar(value=0.0)
-        self.x = tk.DoubleVar(value=0.0)
-        self.y = tk.DoubleVar(value=0.0)
-        self.z = tk.DoubleVar(value=0.2)
-        self.a = tk.DoubleVar(value=0.0)
-        self.b = tk.DoubleVar(value=0.0)
+        # Actualizar campos de posición
+        entry_x.delete(0, tk.END)
+        entry_y.delete(0, tk.END)
+        entry_z.delete(0, tk.END)
+        entry_x.insert(0, str(x))
+        entry_y.insert(0, str(y))
+        entry_z.insert(0, str(z))
         
-        # Configurar interfaz
-        self.crear_interfaz()
-    
-    def crear_interfaz(self):
-        # Frame de parámetros
-        frame_params = ttk.LabelFrame(self.root, text="Parámetros Físicos")
-        frame_params.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
-        
-        ttk.Label(frame_params, text="a:").grid(row=0, column=0)
-        ttk.Entry(frame_params, textvariable=self.a, width=6).grid(row=0, column=1)
-        
-        ttk.Label(frame_params, text="b:").grid(row=0, column=2)
-        ttk.Entry(frame_params, textvariable=self.b, width=6).grid(row=0, column=3)
-        
-        # Frame de control por articulaciones (CORREGIDO)
-        frame_artic = ttk.LabelFrame(self.root, text="Control por Articulaciones")
-        frame_artic.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
-        
-        # Slider para q1 (sin cambios)
-        ttk.Label(frame_artic, text="Theta1 (q1):").grid(row=0, column=0)
-        ttk.Scale(frame_artic, from_=-90, to=180, variable=self.q1).grid(row=0, column=1)
-        ttk.Entry(frame_artic, textvariable=self.q1, width=8).grid(row=0, column=2)
-        ttk.Label(frame_artic, text="°").grid(row=0, column=3)
-        
-        # Sliders para q2 y q3 (CORREGIDOS)
-        ttk.Label(frame_artic, text="Extensión q2:").grid(row=1, column=0)
-        self.slider_q2 = tk.Scale(frame_artic, from_=0, to=50, orient=tk.HORIZONTAL, 
-                                 variable=self.q2, resolution=0.1)
-        self.slider_q2.grid(row=1, column=1)
-        ttk.Entry(frame_artic, textvariable=self.q2, width=8).grid(row=1, column=2)
-        ttk.Label(frame_artic, text="cm").grid(row=1, column=3)
-        
-        ttk.Label(frame_artic, text="Extensión q3:").grid(row=2, column=0)
-        self.slider_q3 = tk.Scale(frame_artic, from_=0, to=50, orient=tk.HORIZONTAL,
-                                 variable=self.q3, resolution=0.1)
-        self.slider_q3.grid(row=2, column=1)
-        ttk.Entry(frame_artic, textvariable=self.q3, width=8).grid(row=2, column=2)
-        ttk.Label(frame_artic, text="cm").grid(row=2, column=3)
-        
-        # Configurar conversión de cm a m
-        self.q2.trace_add('write', lambda *_: self.convertir_cm_a_m('q2'))
-        self.q3.trace_add('write', lambda *_: self.convertir_cm_a_m('q3'))
-        
-        ttk.Button(frame_artic, text="Mover Brazo", command=self.mover_articulaciones).grid(row=3, column=0, columnspan=4)
-        ttk.Button(frame_artic, text="Calcular Posición", command=self.calcular_posicion).grid(row=4, column=0, columnspan=4)
-        
-        # Resto de la interfaz (sin cambios)
-        frame_pos = ttk.LabelFrame(self.root, text="Control por Posición")
-        frame_pos.grid(row=1, column=1, padx=10, pady=5, sticky="nsew")
-        
-        ttk.Label(frame_pos, text="X:").grid(row=0, column=0)
-        ttk.Entry(frame_pos, textvariable=self.x, width=8).grid(row=0, column=1)
-        ttk.Label(frame_pos, text="m").grid(row=0, column=2)
-        
-        ttk.Label(frame_pos, text="Y:").grid(row=1, column=0)
-        ttk.Entry(frame_pos, textvariable=self.y, width=8).grid(row=1, column=1)
-        ttk.Label(frame_pos, text="m").grid(row=1, column=2)
-        
-        ttk.Label(frame_pos, text="Z:").grid(row=2, column=0)
-        ttk.Entry(frame_pos, textvariable=self.z, width=8).grid(row=2, column=1)
-        ttk.Label(frame_pos, text="m").grid(row=2, column=2)
-        
-        ttk.Button(frame_pos, text="Mover a Posición", command=self.mover_a_posicion).grid(row=3, column=0, columnspan=3)
-        ttk.Button(frame_pos, text="Calcular Articulaciones", command=self.calcular_articulaciones).grid(row=4, column=0, columnspan=3)
-        
-        frame_estado = ttk.LabelFrame(self.root, text="Estado Actual")
-        frame_estado.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
-        
-        ttk.Label(frame_estado, text="Posición:").grid(row=0, column=0)
-        self.lbl_pos = ttk.Label(frame_estado, text="X: 0.000 m, Y: 0.000 m, Z: 0.200 m")
-        self.lbl_pos.grid(row=0, column=1, columnspan=3)
-        
-        ttk.Label(frame_estado, text="Articulaciones:").grid(row=1, column=0)
-        self.lbl_art = ttk.Label(frame_estado, text="q1: 0°, q2: 0.000 m, q3: 0.000 m")
-        self.lbl_art.grid(row=1, column=1, columnspan=3)
-    
-    def convertir_cm_a_m(self, variable):
-        """Convierte centímetros (sliders) a metros (variables)"""
-        if variable == 'q2':
-            self.q2.set(self.slider_q2.get() / 100)  # cm a m
-        elif variable == 'q3':
-            self.q3.set(self.slider_q3.get() / 100)  # cm a m
-    
-    def mover_articulaciones(self):
-        q1 = self.q1.get()
-        q2 = self.q2.get()
-        q3 = self.q3.get()
-        
-        if self.esp32.enviar_comando(q1, q2, q3):
-            x, y, z = cinematica_directa_RPP(q1, q2, q3, self.a.get(), self.b.get())
-            self.lbl_pos.config(text=f"X: {x:.3f} m, Y: {y:.3f} m, Z: {z:.3f} m")
-            self.lbl_art.config(text=f"q1: {q1:.1f}°, q2: {q2:.3f} m, q3: {q3:.3f} m")
-    
-    def calcular_posicion(self):
-        q1 = self.q1.get()
-        q2 = self.q2.get()
-        q3 = self.q3.get()
-        a = self.a.get()
-        b = self.b.get()
-        
-        x, y, z = cinematica_directa_RPP(q1, q2, q3, a, b)
-        self.x.set(round(x, 3))
-        self.y.set(round(y, 3))
-        self.z.set(round(z, 3))
-        self.lbl_pos.config(text=f"X: {x:.3f} m, Y: {y:.3f} m, Z: {z:.3f} m")
-    
-    def mover_a_posicion(self):
-        x = self.x.get()
-        y = self.y.get()
-        z = self.z.get()
-        a = self.a.get()
-        b = self.b.get()
-        
-        q1, q2, q3 = cinematica_inversa_RPP(x, y, z, a, b)
-        self.q1.set(round(q1, 1))
-        self.q2.set(round(q2, 3))
-        self.q3.set(round(q3, 3))
-        self.slider_q2.set(q2 * 100)  # m a cm
-        self.slider_q3.set(q3 * 100)  # m a cm
-        
-        if self.esp32.enviar_comando(q1, q2, q3):
-            self.lbl_art.config(text=f"q1: {q1:.1f}°, q2: {q2:.3f} m, q3: {q3:.3f} m")
-    
-    def calcular_articulaciones(self):
-        x = self.x.get()
-        y = self.y.get()
-        z = self.z.get()
-        a = self.a.get()
-        b = self.b.get()
-        
-        q1, q2, q3 = cinematica_inversa_RPP(x, y, z, a, b)
-        self.q1.set(round(q1, 1))
-        self.q2.set(round(q2, 3))
-        self.q3.set(round(q3, 3))
-        self.slider_q2.set(q2 * 100)  # m a cm
-        self.slider_q3.set(q3 * 100)  # m a cm
-        self.lbl_art.config(text=f"q1: {q1:.1f}°, q2: {q2:.3f} m, q3: {q3:.3f} m")
+    except ValueError:
+        messagebox.showerror("Error", "Por favor ingrese valores enteros válidos")
 
-# =============================================
-# EJECUCIÓN PRINCIPAL
-# =============================================
+def enviar_valores_robot():
+    """
+    Obtiene los valores articulares de la interfaz y los envía al robot
+    mediante comunicación serial.
+    """
+    try:
+        # Obtener valores de la interfaz
+        q1 = int(entry_q1.get())
+        q2 = int(entry_q2.get())
+        q3 = int(entry_q3.get())
+        
+        # Enviar comandos al robot
+        if enviar_comando_robot(q1, q2, q3):
+            # Mostrar confirmación
+            messagebox.showinfo(
+                "Envío Exitoso",
+                f"Valores enviados al robot:\n"
+                f"q1: {q1}°\n"
+                f"q2: {q2} mm\n"
+                f"q3: {q3} mm"
+            )
+    except ValueError:
+        messagebox.showerror("Error", "Los valores articulares deben ser números enteros")
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = BrazoRPP_HMI(root)
-    
-    def on_closing():
-        if hasattr(app, 'esp32'):
-            app.esp32.cerrar()
-        root.destroy()
-    
-    root.protocol("WM_DELETE_WINDOW", on_closing)
-    root.mainloop()
+def on_closing():
+    """
+    Función ejecutada al cerrar la ventana. Garantiza un cierre seguro
+    liberando los recursos de comunicación serial.
+    """
+    cerrar_serial()  # Cerrar conexión serial
+    root.destroy()   # Cerrar ventana principal
+
+# =============================================================================
+# CONFIGURACIÓN DE LA INTERFAZ GRÁFICA
+# =============================================================================
+# Crear ventana principal
+root = tk.Tk()
+root.title("Control Robot RPP - HMI")
+root.geometry("300x450")  # Tamaño inicial de la ventana
+
+# Configuración de estilos visuales
+style = ttk.Style()
+style.configure("TFrame", padding=10)  # Espaciado interno para frames
+style.configure("TButton", padding=5)  # Botones más grandes
+style.configure("Accent.TButton", foreground="white", background="#4CAF50")  # Botón verde
+style.configure("Warning.TButton", foreground="white", background="#f44336")  # Botón rojo
+
+# =============================================================================
+# COMPONENTES DE LA INTERFAZ
+# =============================================================================
+# Frame para controles de posición
+frame_pos = ttk.LabelFrame(root, text="Posición (X,Y,Z) - mm", padding=10)
+frame_pos.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+
+# Campos para posición X,Y,Z
+ttk.Label(frame_pos, text="X (mm):").grid(row=0, column=0, sticky="w")
+entry_x = ttk.Entry(frame_pos)
+entry_x.grid(row=0, column=1)
+
+ttk.Label(frame_pos, text="Y (mm):").grid(row=1, column=0, sticky="w")
+entry_y = ttk.Entry(frame_pos)
+entry_y.grid(row=1, column=1)
+
+ttk.Label(frame_pos, text="Z (mm):").grid(row=2, column=0, sticky="w")
+entry_z = ttk.Entry(frame_pos)
+entry_z.grid(row=2, column=1)
+
+# Botón para calcular articulaciones
+ttk.Button(
+    frame_pos, 
+    text="Calcular Articulaciones →", 
+    command=calcular_desde_posicion
+).grid(row=3, columnspan=2, pady=5)
+
+# Frame para controles de articulaciones
+frame_art = ttk.LabelFrame(root, text="Articulaciones", padding=10)
+frame_art.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+
+# Campos para articulaciones q1,q2,q3
+ttk.Label(frame_art, text="q1 (°):").grid(row=0, column=0, sticky="w")
+entry_q1 = ttk.Entry(frame_art)
+entry_q1.grid(row=0, column=1)
+
+ttk.Label(frame_art, text="q2 (mm):").grid(row=1, column=0, sticky="w")
+entry_q2 = ttk.Entry(frame_art)
+entry_q2.grid(row=1, column=1)
+
+ttk.Label(frame_art, text="q3 (mm):").grid(row=2, column=0, sticky="w")
+entry_q3 = ttk.Entry(frame_art)
+entry_q3.grid(row=2, column=1)
+
+# Botón para calcular posición
+ttk.Button(
+    frame_art, 
+    text="Calcular Posición →", 
+    command=calcular_desde_articulaciones
+).grid(row=3, columnspan=2, pady=5)
+
+# Frame para botones de control
+frame_control = ttk.Frame(root, padding=10)
+frame_control.grid(row=2, column=0, sticky="ew")
+
+# Botón para enviar valores al robot
+ttk.Button(
+    frame_control,
+    text="ENVIAR AL ROBOT",
+    command=enviar_valores_robot,
+    style="Accent.TButton"
+).pack(fill=tk.X)
+
+# Botón para desconectar
+ttk.Button(
+    frame_control,
+    text="DESCONECTAR",
+    command=cerrar_serial,
+    style="Warning.TButton"
+).pack(fill=tk.X, pady=5)
+
+# =============================================================================
+# CONFIGURACIÓN FINAL
+# =============================================================================
+# Configurar función para manejar el cierre de la ventana
+root.protocol("WM_DELETE_WINDOW", on_closing)
+
+# Iniciar el bucle principal de la interfaz
+root.mainloop()

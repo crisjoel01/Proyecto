@@ -2,7 +2,7 @@ import serial
 import time
 
 # Configura el puerto serial (ajusta el nombre del puerto)
-puerto = serial.Serial('/dev/ttyUSB1', 115200, timeout=1)
+puerto = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
 
 try:
     while True:
