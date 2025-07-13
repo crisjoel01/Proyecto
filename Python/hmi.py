@@ -59,10 +59,10 @@ def cinematica_inversa_RPP(x, y, z):
     theta1 = max(0, min(180, theta1))
     
     # Cálculo de q2 (altura - articulación prismática vertical)
-    q2 = max(0, z - 45)  # El offset de 45mm corresponde a la altura base
+    q2 = max(0, min(70,z - 45))  # El offset de 45mm corresponde a la altura base
     
     # Cálculo de q3 (radio - articulación prismática horizontal)
-    q3 = max(0, int(np.sqrt(x**2 + y**2 - 676) - 15))  # 676 = 26^2 (radio base)
+    q3 = max(0, min(80,int(np.sqrt(x**2 + y**2 - 676) - 15)))  # 676 = 26^2 (radio base)
     
     return theta1, q2, q3
 
@@ -284,7 +284,7 @@ def on_closing():
 # Crear ventana principal
 root = tk.Tk()
 root.title("Control Robot RPP - HMI")
-root.geometry("300x450")  # Tamaño inicial de la ventana
+root.geometry("280x420")  # Tamaño inicial de la ventana
 
 # Configuración de estilos visuales
 style = ttk.Style()
