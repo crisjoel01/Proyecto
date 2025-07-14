@@ -7,9 +7,7 @@ Este programa permite:
 4. Visualizar y enviar comandos al robot
 """
 
-# =============================================================================
 # MÓDULOS IMPORTADOS
-# =============================================================================
 import tkinter as tk                # Para la interfaz gráfica
 from tkinter import ttk, messagebox # Componentes modernos y cuadros de diálogo
 import numpy as np                  # Para cálculos matemáticos avanzados
@@ -17,21 +15,15 @@ from math import cos, sin, radians  # Funciones trigonométricas
 import serial                       # Para comunicación con puerto serial
 import time                         # Para manejar retardos
 
-# =============================================================================
 # CONFIGURACIÓN GLOBAL (AJUSTAR SEGÚN HARDWARE)
-# =============================================================================
 SERIAL_PORT = '/dev/ttyUSB0'  # Puerto serial (cambiar según sistema operativo)
 BAUD_RATE = 115200            # Velocidad de comunicación (debe coincidir con ESP32)
 SERIAL_TIMEOUT = 1            # Tiempo de espera para operaciones serial (segundos)
 
-# =============================================================================
 # VARIABLES GLOBALES
-# =============================================================================
 puerto_serial = None  # Almacenará el objeto de conexión serial cuando esté activo
 
-# =============================================================================
 # FUNCIONES DE CINEMÁTICA DEL ROBOT
-# =============================================================================
 def cinematica_inversa_RPP(x, y, z):
     """
     Calcula los valores de las articulaciones (q1, q2, q3) necesarios para alcanzar
@@ -45,8 +37,8 @@ def cinematica_inversa_RPP(x, y, z):
     Retorna:
         tuple: (q1, q2, q3) donde:
             q1: Ángulo de la articulación rotacional en grados (0-180)
-            q2: Extensión de la primera articulación prismática en mm
-            q3: Extensión de la segunda articulación prismática en mm
+            q2: Extensión de la primera articulación prismática en mm (0-70)
+            q3: Extensión de la segunda articulación prismática en mm (0-80)
     """
     # Conversión a enteros para garantizar precisión
     x, y, z = int(x), int(y), int(z)
@@ -110,9 +102,7 @@ def cinematica_directa_RPP(q1, q2, q3):
     # Redondear y convertir a enteros
     return int(round(x)), int(round(y)), int(round(z))
 
-# =============================================================================
 # FUNCIONES DE COMUNICACIÓN SERIAL
-# =============================================================================
 def conectar_serial():
     """
     Establece conexión serial con el robot.
@@ -193,9 +183,7 @@ def enviar_comando_robot(q1, q2, q3):
         cerrar_serial()  # Intentar limpiar la conexión
         return False
 
-# =============================================================================
 # FUNCIONES DE LA INTERFAZ GRÁFICA (HMI)
-# =============================================================================
 def calcular_desde_posicion():
     """
     Calcula los valores articulares (q1,q2,q3) a partir de la posición ingresada
@@ -278,9 +266,7 @@ def on_closing():
     cerrar_serial()  # Cerrar conexión serial
     root.destroy()   # Cerrar ventana principal
 
-# =============================================================================
 # CONFIGURACIÓN DE LA INTERFAZ GRÁFICA
-# =============================================================================
 # Crear ventana principal
 root = tk.Tk()
 root.title("Control Robot RPP - HMI")
@@ -293,9 +279,7 @@ style.configure("TButton", padding=5)  # Botones más grandes
 style.configure("Accent.TButton", foreground="white", background="#4CAF50")  # Botón verde
 style.configure("Warning.TButton", foreground="white", background="#f44336")  # Botón rojo
 
-# =============================================================================
 # COMPONENTES DE LA INTERFAZ
-# =============================================================================
 # Frame para controles de posición
 frame_pos = ttk.LabelFrame(root, text="Posición (X,Y,Z) - mm", padding=10)
 frame_pos.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
@@ -364,9 +348,7 @@ ttk.Button(
     style="Warning.TButton"
 ).pack(fill=tk.X, pady=5)
 
-# =============================================================================
 # CONFIGURACIÓN FINAL
-# =============================================================================
 # Configurar función para manejar el cierre de la ventana
 root.protocol("WM_DELETE_WINDOW", on_closing)
 
