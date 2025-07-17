@@ -79,18 +79,18 @@ def cinematica_directa_RPP(q1, q2, q3):
     
     # Matriz de transformación homogénea para la articulación rotacional (q1)
     T1 = np.array([
-        [cos(q1_rad), -sin(q1_rad), 0, 0],
-        [sin(q1_rad), cos(q1_rad), 0, 0],
-        [0, 0, 1, q2 + 87],  # 87mm es la altura base del primer eslabón
-        [0, 0, 0, 1]
+        [cos(q1_rad),   -sin(q1_rad), 0,    0       ],
+        [sin(q1_rad),   cos(q1_rad),  0,    0       ],
+        [0,             0,            1,    q2 + 87 ],  # 87mm es la altura base del primer eslabón
+        [0,             0,            0,    1       ]
     ])
     
     # Matriz de transformación para las articulaciones prismáticas (q2, q3)
     T2 = np.array([
-        [1, 0, 0, -26],            # Offset en X del efector
-        [0, 1, 0, -(q3 + 15)],      # q3 + offset de 15mm
-        [0, 0, 1, -42],            # Offset en Z del efector
-        [0, 0, 0, 1]
+        [1, 0, 0, -26       ],            # Offset en X del efector
+        [0, 1, 0, -(q3 + 32)],      # q3 + offset de 15mm
+        [0, 0, 1, -42       ],            # Offset en Z del efector
+        [0, 0, 0, 1         ]
     ])
     
     # Combinar transformaciones
